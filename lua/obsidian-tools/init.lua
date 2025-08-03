@@ -53,7 +53,7 @@ function M.setup_keymaps()
     map("n", "<leader>oot", "<cmd>:lua require('obsidian-tools').create_daily_file(os.date('%Y-%m-%d'))<CR>", defaults) -- Today's note
     map("n", "<leader>ooy", "<cmd>:lua require('obsidian-tools').create_daily_file(require('obsidian-tools').get_yesterday(os.date('%Y-%m-%d')))<CR>", defaults) -- Yesterday's note
     map("n", "<leader>ooT", "<cmd>:lua require('obsidian-tools').create_daily_file(require('obsidian-tools').get_tomorrow(os.date('%Y-%m-%d')))<CR>", defaults) -- Tomorrow's note
-    map("n", "<leader>ot", "<cmd>:Easypick tags<CR>", defaults) -- Tag search
+    map("n", "<leader>ot", "<cmd>:lua require('obsidian-tools').before_get_sql_tags()<CR>", defaults) -- Tag search
     map("n", "<leader>ob", "<cmd>:lua require('obsidian-tools').get_current_backlinks()<CR>", defaults) -- Backlink search
     map("n", "<Enter>", "<cmd>:lua require('obsidian-tools').auto_detect()<CR>", defaults) -- Auto-detect link
     map("n", "<C-p>", "<cmd>:lua require('obsidian-tools').auto_detect()<CR>", defaults) -- Auto-detect link
@@ -210,7 +210,12 @@ end
 
 -- Telescope picker for attributes
 function M.pick_attribute(text, callback)
-    local pickers = require("telescope.pickers")
+    debug_print("obsidian-tools: Attempting to use Telescope picker")
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if not ok then
+        debug_print("obsidian-tools: Telescope not available, falling back to pick_attribute2")
+        return M.pick_attribute2(text, callback)
+    end
     local finders = require("telescope.finders")
     local actions = require("telescope.actions")
     local action_state = require("telescope.actions.state")
@@ -218,6 +223,11 @@ function M.pick_attribute(text, callback)
     local attributes = {}
     for attribute in text:gmatch("[^\r\n]+") do
         table.insert(attributes, attribute)
+    end
+    if #attributes == 0 then
+        debug_print("obsidian-tools: No attributes to pick")
+        vim.notify("obsidian-tools: No attributes found to pick", vim.log.levels.WARN)
+        return
     end
 
     pickers.new({}, {
@@ -228,8 +238,12 @@ function M.pick_attribute(text, callback)
             actions.select_default:replace(function()
                 actions.close(prompt_bufnr)
                 local selection = action_state.get_selected_entry()
-                debug_print("obsidian-tools: Selected Attribute: " .. selection[1])
-                callback(selection[1])
+                if selection then
+                    debug_print("obsidian-tools: Selected Attribute: " .. selection[1])
+                    callback(selection[1])
+                else
+                    debug_print("obsidian-tools: No selection made")
+                end
             end)
             return true
         end,
@@ -242,10 +256,13 @@ function M.pick_attribute2(text, callback)
     for attribute in text:gmatch("[^\r\n]+") do
         table.insert(attributes, attribute)
     end
-    if #attributes > 0 then
-        debug_print("obsidian-tools: Selected Attribute (fallback): " .. attributes[1])
-        callback(attributes[1])
+    if #attributes == 0 then
+        debug_print("obsidian-tools: No attributes to pick in fallback")
+        vim.notify("obsidian-tools: No attributes found to pick (fallback)", vim.log.levels.WARN)
+        return
     end
+    debug_print("obsidian-tools: Fallback picker selected: " .. attributes[1])
+    callback(attributes[1])
 end
 
 -- Get current backlinks
@@ -316,19 +333,28 @@ function M.get_ripgrep(folder, url)
     return result:sub(1, -2)
 end
 
--- Get SQL tags
-function M.get_sql_tags(tag)
-    local text = 'sqlite3 "' .. M.config.obsidian_vault_path .. 'markdown_data.db" "SELECT f.path FROM files f JOIN file_tags ft ON f.id = ft.file_id JOIN tags t ON ft.tag_id = t.id WHERE t.tag=\'' .. M.sanitize_sql_injection(tag) .. '\';"'
-    debug_print("obsidian-tools: Running tag query: " .. text)
-    local edit_md = function(content)
-        local path = M.config.obsidian_vault_path .. content
-        debug_print("obsidian-tools: Editing tag file: " .. path)
-        vim.cmd("edit " .. vim.fn.fnameescape(path))
+-- Get SQL tags (entry point for tag search)
+function M.before_get_sql_tags()
+    local res = M.do_sqlite_all("SELECT tag FROM tags;")
+    debug_print("obsidian-tools: Tags query result: " .. res)
+    local function get_sql_tags(tag)
+        local text = 'sqlite3 "' .. M.config.obsidian_vault_path .. 'markdown_data.db" "SELECT f.path FROM files f JOIN file_tags ft ON f.id = ft.file_id JOIN tags t ON ft.tag_id = t.id WHERE t.tag=\'' .. M.sanitize_sql_injection(tag) .. '\';"'
+        debug_print("obsidian-tools: Running tag query: " .. text)
+        local edit_md = function(content)
+            local path = M.config.obsidian_vault_path .. content
+            debug_print("obsidian-tools: Editing tag file: " .. path)
+            vim.cmd("edit " .. vim.fn.fnameescape(path))
+        end
+        if _G.libsAreWorking then
+            M.pick_attribute(M.do_sql(text), edit_md)
+        else
+            M.pick_attribute2(M.do_sql(text), edit_md)
+        end
     end
     if _G.libsAreWorking then
-        M.pick_attribute(M.do_sql(text), edit_md)
+        M.pick_attribute(res, get_sql_tags)
     else
-        M.pick_attribute2(M.do_sql(text), edit_md)
+        M.pick_attribute2(res, get_sql_tags)
     end
 end
 
