@@ -3,6 +3,7 @@
 -- image/audio handling, daily note creation, and template processing.
 
 local M = {}
+_G.libsAreWorking=true
 
 -- Default configuration
 M.config = {
@@ -213,12 +214,34 @@ function M.pick_attribute(text, callback)
     debug_print("obsidian-tools: Attempting to use Telescope picker")
     local ok, pickers = pcall(require, "telescope.pickers")
     if not ok then
-        debug_print("obsidian-tools: Telescope not available, falling back to pick_attribute2")
+        debug_print("obsidian-tools: Failed to load telescope.pickers: " .. tostring(pickers))
+        vim.notify("obsidian-tools: Telescope not available, falling back to pick_attribute2", vim.log.levels.WARN)
         return M.pick_attribute2(text, callback)
     end
-    local finders = require("telescope.finders")
-    local actions = require("telescope.actions")
-    local action_state = require("telescope.actions.state")
+    local ok, finders = pcall(require, "telescope.finders")
+    if not ok then
+        debug_print("obsidian-tools: Failed to load telescope.finders: " .. tostring(finders))
+        vim.notify("obsidian-tools: Telescope finders not available, falling back to pick_attribute2", vim.log.levels.WARN)
+        return M.pick_attribute2(text, callback)
+    end
+    local ok, actions = pcall(require, "telescope.actions")
+    if not ok then
+        debug_print("obsidian-tools: Failed to load telescope.actions: " .. tostring(actions))
+        vim.notify("obsidian-tools: Telescope actions not available, falling back to pick_attribute2", vim.log.levels.WARN)
+        return M.pick_attribute2(text, callback)
+    end
+    local ok, action_state = pcall(require, "telescope.actions.state")
+    if not ok then
+        debug_print("obsidian-tools: Failed to load telescope.actions.state: " .. tostring(action_state))
+        vim.notify("obsidian-tools: Telescope action state not available, falling back to pick_attribute2", vim.log.levels.WARN)
+        return M.pick_attribute2(text, callback)
+    end
+    local ok, sorter = pcall(require, "telescope.config")
+    if not ok then
+        debug_print("obsidian-tools: Failed to load telescope.config: " .. tostring(sorter))
+        vim.notify("obsidian-tools: Telescope config not available, falling back to pick_attribute2", vim.log.levels.WARN)
+        return M.pick_attribute2(text, callback)
+    end
 
     local attributes = {}
     for attribute in text:gmatch("[^\r\n]+") do
@@ -230,10 +253,11 @@ function M.pick_attribute(text, callback)
         return
     end
 
+    debug_print("obsidian-tools: Launching Telescope picker with " .. #attributes .. " items")
     pickers.new({}, {
         prompt_title = "Pick an Attribute",
         finder = finders.new_table { results = attributes },
-        sorter = require("telescope.config").values.generic_sorter({}),
+        sorter = sorter.values.generic_sorter({}),
         attach_mappings = function(prompt_bufnr, map)
             actions.select_default:replace(function()
                 actions.close(prompt_bufnr)
@@ -243,6 +267,7 @@ function M.pick_attribute(text, callback)
                     callback(selection[1])
                 else
                     debug_print("obsidian-tools: No selection made")
+                    vim.notify("obsidian-tools: No selection made", vim.log.levels.WARN)
                 end
             end)
             return true
@@ -261,8 +286,19 @@ function M.pick_attribute2(text, callback)
         vim.notify("obsidian-tools: No attributes found to pick (fallback)", vim.log.levels.WARN)
         return
     end
-    debug_print("obsidian-tools: Fallback picker selected: " .. attributes[1])
-    callback(attributes[1])
+    -- Use vim.ui.select for interactive fallback
+    vim.ui.select(attributes, {
+        prompt = "Select an attribute:",
+        format_item = function(item) return item end,
+    }, function(choice)
+        if choice then
+            debug_print("obsidian-tools: Fallback picker selected: " .. choice)
+            callback(choice)
+        else
+            debug_print("obsidian-tools: No selection made in fallback")
+            vim.notify("obsidian-tools: No selection made in fallback", vim.log.levels.WARN)
+        end
+    end)
 end
 
 -- Get current backlinks
@@ -270,8 +306,10 @@ function M.get_current_backlinks()
     local on_cursor = M.wikilink_detect_on_cursor()
     if not on_cursor then
         on_cursor = M.remove_string(vim.fn.expand("%:p"), M.config.obsidian_vault_path)
+        debug_print("obsidian-tools: No wikilink under cursor, using current file: " .. on_cursor)
     else
         on_cursor = M.find_wikilink(on_cursor)
+        debug_print("obsidian-tools: Wikilink found: " .. on_cursor)
     end
     local query = "SELECT DISTINCT f.path AS full_path FROM backlinks b JOIN files f ON b.file_id = f.id JOIN files fp ON b.backlink_id = fp.id WHERE fp.path LIKE '%" .. M.sanitize_sql_injection(on_cursor:match("([^\n]*)")) .. "%';"
     local text = M.do_sqlite_all(query)
@@ -345,11 +383,11 @@ function M.before_get_sql_tags()
             debug_print("obsidian-tools: Editing tag file: " .. path)
             vim.cmd("edit " .. vim.fn.fnameescape(path))
         end
-        -- if _G.libsAreWorking then
+        if _G.libsAreWorking then
             M.pick_attribute(M.do_sql(text), edit_md)
-        -- else
-        --     M.pick_attribute2(M.do_sql(text), edit_md)
-        -- end
+        else
+            M.pick_attribute2(M.do_sql(text), edit_md)
+        end
     end
     if _G.libsAreWorking then
         M.pick_attribute(res, get_sql_tags)
