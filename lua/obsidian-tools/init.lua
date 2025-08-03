@@ -186,7 +186,7 @@ function M.auto_detect()
             vim.cmd("edit " .. M.config.obsidian_vault_path .. search)
         end
     elseif file_extension == "avif" or file_extension == "png" or file_extension == "jpg" then
-        vim.api.nvim_command(":terminal timg ./" .. search)
+        vim.api.nvim_command(':terminal timg ./"' .. search .. '"')
     else
         M.play_audio(M.get_ripgrep(M.config.music_folder, content), content)
     end
