@@ -8,7 +8,7 @@ local M = {}
 M.config = {
     obsidian_vault_path = "", -- Path to Obsidian vault
     music_folder = "",        -- Path to music folder
-    template_path = "",       -- Path to template file (e.g., Templates/Yaml-Template.md)
+    template_path = "",       -- Path to template directory (e.g., /path/to/Templates)
     debug = false,            -- Enable debug printing
 }
 
@@ -34,12 +34,13 @@ function M.setup(opts)
     _G.Obsidian_valt_main_path = M.config.obsidian_vault_path
     _G.musik_folder = M.config.music_folder
     -- Setup keymappings
+    debug_print("obsidian-tools: Setting up keymappings")
     M.setup_keymaps()
 end
 
 -- Keymap helper
 local function map(mode, lhs, rhs, opts)
-    vim.keymap.set(mode, lhs, rhs, vim.tbl_extend("force", { noremap = true, silent = true }, opts or {}))
+    vim.api.nvim_set_keymap(mode, lhs, rhs, vim.tbl_extend("force", { noremap = true, silent = true }, opts or {}))
 end
 
 -- Setup keymappings
@@ -56,6 +57,7 @@ function M.setup_keymaps()
     map("n", "<leader>ob", "<cmd>:lua require('obsidian-tools').get_current_backlinks()<CR>", defaults) -- Backlink search
     map("n", "<Enter>", "<cmd>:lua require('obsidian-tools').auto_detect()<CR>", defaults) -- Auto-detect link
     map("n", "<C-p>", "<cmd>:lua require('obsidian-tools').auto_detect()<CR>", defaults) -- Auto-detect link
+    map("n", "<leader>z", "<cmd>:lua print('Test mapping')<CR>", defaults) -- Test mapping
 end
 
 -- Utility function to sanitize SQL input
@@ -115,9 +117,10 @@ end
 -- Process template
 function M.process_template()
     local template_path = M.config.template_path .. "/Yaml-Template.md"
+    debug_print("obsidian-tools: Processing template at " .. template_path)
     local template_file, err = io.open(template_path, "r")
     if not template_file then
-        vim.notify("Could not open template file: " .. (err or "unknown error"), vim.log.levels.ERROR)
+        vim.notify("obsidian-tools: Could not open template file: " .. (err or "unknown error"), vim.log.levels.ERROR)
         return false
     end
 
@@ -150,8 +153,8 @@ end
 -- Create daily note
 function M.create_daily_file(date_format)
     local file_path = M.config.obsidian_vault_path .. "Every day info/" .. date_format .. ".md"
+    debug_print("obsidian-tools: Creating daily file at " .. file_path)
     vim.cmd("edit " .. vim.fn.fnameescape(file_path))
-    debug_print("File created at: " .. file_path)
 end
 
 -- Sanitize backlink
@@ -170,24 +173,37 @@ end
 -- Auto-detect and handle wikilinks
 function M.auto_detect()
     local content = M.wikilink_detect_on_cursor()
-    if not content then return end
+    if not content then
+        debug_print("obsidian-tools: No wikilink detected under cursor")
+        return
+    end
     local sanitized_content = M.sanitize_backlink(content)
     local file_extension = sanitized_content:match(".*%.(.*)$")
     local search = M.find_wikilink(content)
+    debug_print("obsidian-tools: Auto-detect - content: " .. content .. ", search: " .. (search or "nil"))
 
     if file_extension == "md" then
         if search == "" then
             if string.match(content, "%.md$") then
-                vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content))
+                local path = M.config.obsidian_vault_path .. content
+                debug_print("obsidian-tools: Opening markdown file: " .. path)
+                vim.cmd("edit " .. vim.fn.fnameescape(path))
             else
-                vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content .. ".md"))
+                local path = M.config.obsidian_vault_path .. content .. ".md"
+                debug_print("obsidian-tools: Opening markdown file: " .. path)
+                vim.cmd("edit " .. vim.fn.fnameescape(path))
             end
         else
-            vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. search))
+            local path = M.config.obsidian_vault_path .. search
+            debug_print("obsidian-tools: Opening markdown file: " .. path)
+            vim.cmd("edit " .. vim.fn.fnameescape(path))
         end
     elseif file_extension == "avif" or file_extension == "png" or file_extension == "jpg" then
-        vim.api.nvim_command(":terminal timg ./" .. vim.fn.shellescape(search))
+        local path = "./" .. search
+        debug_print("obsidian-tools: Opening image: " .. path)
+        vim.api.nvim_command(":terminal timg " .. vim.fn.shellescape(path))
     else
+        debug_print("obsidian-tools: Playing audio for: " .. content)
         M.play_audio(M.get_ripgrep(M.config.music_folder, content), content)
     end
 end
@@ -212,7 +228,7 @@ function M.pick_attribute(text, callback)
             actions.select_default:replace(function()
                 actions.close(prompt_bufnr)
                 local selection = action_state.get_selected_entry()
-                debug_print("Selected Attribute:", selection[1])
+                debug_print("obsidian-tools: Selected Attribute: " .. selection[1])
                 callback(selection[1])
             end)
             return true
@@ -227,7 +243,7 @@ function M.pick_attribute2(text, callback)
         table.insert(attributes, attribute)
     end
     if #attributes > 0 then
-        debug_print("Selected Attribute (fallback):", attributes[1])
+        debug_print("obsidian-tools: Selected Attribute (fallback): " .. attributes[1])
         callback(attributes[1])
     end
 end
@@ -242,9 +258,11 @@ function M.get_current_backlinks()
     end
     local query = "SELECT DISTINCT f.path AS full_path FROM backlinks b JOIN files f ON b.file_id = f.id JOIN files fp ON b.backlink_id = fp.id WHERE fp.path LIKE '%" .. M.sanitize_sql_injection(on_cursor:match("([^\n]*)")) .. "%';"
     local text = M.do_sqlite_all(query)
-    debug_print(text)
+    debug_print("obsidian-tools: Backlinks query result: " .. text)
     local edit_md = function(content)
-        vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content))
+        local path = M.config.obsidian_vault_path .. content
+        debug_print("obsidian-tools: Editing backlink: " .. path)
+        vim.cmd("edit " .. vim.fn.fnameescape(path))
     end
     if _G.libsAreWorking then
         M.pick_attribute(text, edit_md)
@@ -265,7 +283,7 @@ function M.run_bash_script_and_save()
     local current_file_path = vim.fn.expand("%:p")
     local script_path = "markdown-scanner \"" .. current_file_path .. "\" \"" .. M.config.obsidian_vault_path .. "\""
     local output = vim.fn.system(script_path)
-    debug_print(output .. "THIS IS RUST BABY")
+    debug_print("obsidian-tools: Bash script output: " .. output .. " THIS IS RUST BABY")
 end
 
 -- Wikilink string finder
@@ -290,7 +308,9 @@ end
 
 -- Ripgrep search
 function M.get_ripgrep(folder, url)
-    local handle = io.popen('rg --files "' .. folder .. '" | rg "' .. url .. '" -F')
+    local command = 'rg --files "' .. folder .. '" | rg "' .. url .. '" -F'
+    debug_print("obsidian-tools: Running ripgrep: " .. command)
+    local handle = io.popen(command)
     local result = handle:read("*a")
     handle:close()
     return result:sub(1, -2)
@@ -299,8 +319,11 @@ end
 -- Get SQL tags
 function M.get_sql_tags(tag)
     local text = 'sqlite3 "' .. M.config.obsidian_vault_path .. 'markdown_data.db" "SELECT f.path FROM files f JOIN file_tags ft ON f.id = ft.file_id JOIN tags t ON ft.tag_id = t.id WHERE t.tag=\'' .. M.sanitize_sql_injection(tag) .. '\';"'
+    debug_print("obsidian-tools: Running tag query: " .. text)
     local edit_md = function(content)
-        vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content))
+        local path = M.config.obsidian_vault_path .. content
+        debug_print("obsidian-tools: Editing tag file: " .. path)
+        vim.cmd("edit " .. vim.fn.fnameescape(path))
     end
     if _G.libsAreWorking then
         M.pick_attribute(M.do_sql(text), edit_md)
@@ -311,6 +334,7 @@ end
 
 -- Execute SQL command
 function M.do_sql(search_cmd)
+    debug_print("obsidian-tools: Running SQL: " .. search_cmd)
     local handle = io.popen(search_cmd)
     local result = handle:read("*a")
     handle:close()
@@ -332,6 +356,7 @@ end
 -- Find wikilink
 function M.find_wikilink(content)
     local search_cmd = 'sqlite3 "' .. M.config.obsidian_vault_path .. 'markdown_data.db" "SELECT DISTINCT f.path AS full_path FROM backlinks b JOIN files f ON b.backlink_id = f.id WHERE b.backlink=\'' .. M.sanitize_sql_injection(content) .. '\';"'
+    debug_print("obsidian-tools: Finding wikilink: " .. search_cmd)
     return M.do_sql_one_liner(search_cmd)
 end
 
@@ -339,7 +364,9 @@ end
 function M.my_image_finder()
     local content = M.wikilink_detect_on_cursor()
     if content then
-        vim.api.nvim_command(":terminal timg " .. vim.fn.shellescape(M.find_wikilink(content)))
+        local path = M.find_wikilink(content)
+        debug_print("obsidian-tools: Opening image: " .. path)
+        vim.api.nvim_command(":terminal timg " .. vim.fn.shellescape(path))
     end
 end
 
@@ -347,6 +374,7 @@ end
 function M.my_music_finder()
     local content = M.wikilink_detect_on_cursor()
     if content then
+        debug_print("obsidian-tools: Finding music: " .. content)
         M.play_audio(M.get_ripgrep(M.config.music_folder, content), content)
     end
 end
@@ -355,7 +383,9 @@ end
 function M.edit_wikilink_content()
     local content = M.wikilink_detect_on_cursor()
     if content then
-        vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. M.find_wikilink(content)))
+        local path = M.config.obsidian_vault_path .. M.find_wikilink(content)
+        debug_print("obsidian-tools: Editing wikilink: " .. path)
+        vim.cmd("edit " .. vim.fn.fnameescape(path))
     end
 end
 
@@ -367,7 +397,7 @@ function M.play_audio(link, url)
     if job_pid ~= nil then
         M.stop_audio()
     end
-    debug_print("Playing: " .. url)
+    debug_print("obsidian-tools: Playing audio: " .. url)
     local cmd = 'vlc -I rc "' .. link .. '" > /dev/null 2>&1'
     job_pid = vim.fn.jobstart(cmd, {
         cwd = M.config.obsidian_vault_path,
@@ -378,6 +408,7 @@ end
 -- Stop audio
 function M.stop_audio()
     if job_pid ~= nil then
+        debug_print("obsidian-tools: Stopping audio")
         vim.fn.jobstop(job_pid)
         job_pid = nil
     end
