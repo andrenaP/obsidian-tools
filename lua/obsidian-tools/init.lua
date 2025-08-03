@@ -39,7 +39,7 @@ end
 
 -- Keymap helper
 local function map(mode, lhs, rhs, opts)
-    vim.api.nvim_set_keymap(mode, lhs, rhs, vim.tbl_extend("force", { noremap = true, silent = true }, opts or {}))
+    vim.keymap.set(mode, lhs, rhs, vim.tbl_extend("force", { noremap = true, silent = true }, opts or {}))
 end
 
 -- Setup keymappings
@@ -114,7 +114,7 @@ end
 
 -- Process template
 function M.process_template()
-    local template_path = M.config.template_path
+    local template_path = M.config.template_path .. "/Yaml-Template.md"
     local template_file, err = io.open(template_path, "r")
     if not template_file then
         vim.notify("Could not open template file: " .. (err or "unknown error"), vim.log.levels.ERROR)
@@ -150,7 +150,7 @@ end
 -- Create daily note
 function M.create_daily_file(date_format)
     local file_path = M.config.obsidian_vault_path .. "Every day info/" .. date_format .. ".md"
-    vim.cmd("edit " .. file_path)
+    vim.cmd("edit " .. vim.fn.fnameescape(file_path))
     debug_print("File created at: " .. file_path)
 end
 
@@ -178,15 +178,15 @@ function M.auto_detect()
     if file_extension == "md" then
         if search == "" then
             if string.match(content, "%.md$") then
-                vim.cmd("edit " .. M.config.obsidian_vault_path .. content)
+                vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content))
             else
-                vim.cmd("edit " .. M.config.obsidian_vault_path .. content .. ".md")
+                vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content .. ".md"))
             end
         else
-            vim.cmd("edit " .. M.config.obsidian_vault_path .. search)
+            vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. search))
         end
     elseif file_extension == "avif" or file_extension == "png" or file_extension == "jpg" then
-        vim.api.nvim_command(':terminal timg ./"' .. search .. '"')
+        vim.api.nvim_command(":terminal timg ./" .. vim.fn.shellescape(search))
     else
         M.play_audio(M.get_ripgrep(M.config.music_folder, content), content)
     end
@@ -226,7 +226,6 @@ function M.pick_attribute2(text, callback)
     for attribute in text:gmatch("[^\r\n]+") do
         table.insert(attributes, attribute)
     end
-    -- Simple fallback: print first attribute and call callback
     if #attributes > 0 then
         debug_print("Selected Attribute (fallback):", attributes[1])
         callback(attributes[1])
@@ -241,11 +240,11 @@ function M.get_current_backlinks()
     else
         on_cursor = M.find_wikilink(on_cursor)
     end
-    local query = "SELECT DISTINCT f.path AS full_path FROM backlinks b JOIN files f ON b.file_id = f.id JOIN files fp ON b.backlink_id = fp.id WHERE fp.path LIKE '%" .. on_cursor:match("([^\n]*)") .. "%';"
+    local query = "SELECT DISTINCT f.path AS full_path FROM backlinks b JOIN files f ON b.file_id = f.id JOIN files fp ON b.backlink_id = fp.id WHERE fp.path LIKE '%" .. M.sanitize_sql_injection(on_cursor:match("([^\n]*)")) .. "%';"
     local text = M.do_sqlite_all(query)
     debug_print(text)
     local edit_md = function(content)
-        vim.cmd("edit " .. M.config.obsidian_vault_path .. content)
+        vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content))
     end
     if _G.libsAreWorking then
         M.pick_attribute(text, edit_md)
@@ -301,7 +300,7 @@ end
 function M.get_sql_tags(tag)
     local text = 'sqlite3 "' .. M.config.obsidian_vault_path .. 'markdown_data.db" "SELECT f.path FROM files f JOIN file_tags ft ON f.id = ft.file_id JOIN tags t ON ft.tag_id = t.id WHERE t.tag=\'' .. M.sanitize_sql_injection(tag) .. '\';"'
     local edit_md = function(content)
-        vim.cmd("edit " .. M.config.obsidian_vault_path .. content)
+        vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. content))
     end
     if _G.libsAreWorking then
         M.pick_attribute(M.do_sql(text), edit_md)
@@ -340,7 +339,7 @@ end
 function M.my_image_finder()
     local content = M.wikilink_detect_on_cursor()
     if content then
-        vim.api.nvim_command(":terminal timg " .. M.find_wikilink(content))
+        vim.api.nvim_command(":terminal timg " .. vim.fn.shellescape(M.find_wikilink(content)))
     end
 end
 
@@ -356,7 +355,7 @@ end
 function M.edit_wikilink_content()
     local content = M.wikilink_detect_on_cursor()
     if content then
-        vim.cmd("edit " .. M.config.obsidian_vault_path .. M.find_wikilink(content))
+        vim.cmd("edit " .. vim.fn.fnameescape(M.config.obsidian_vault_path .. M.find_wikilink(content)))
     end
 end
 
