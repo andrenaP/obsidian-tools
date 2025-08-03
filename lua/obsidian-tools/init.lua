@@ -345,11 +345,11 @@ function M.before_get_sql_tags()
             debug_print("obsidian-tools: Editing tag file: " .. path)
             vim.cmd("edit " .. vim.fn.fnameescape(path))
         end
-        if _G.libsAreWorking then
+        -- if _G.libsAreWorking then
             M.pick_attribute(M.do_sql(text), edit_md)
-        else
-            M.pick_attribute2(M.do_sql(text), edit_md)
-        end
+        -- else
+        --     M.pick_attribute2(M.do_sql(text), edit_md)
+        -- end
     end
     if _G.libsAreWorking then
         M.pick_attribute(res, get_sql_tags)
