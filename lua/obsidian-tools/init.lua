@@ -3,7 +3,7 @@
 -- image/audio handling, daily note creation, and template processing.
 
 local M = {}
-_G.libsAreWorking=true
+_G.libsAreWorking = true
 
 -- Default configuration
 M.config = {
@@ -34,31 +34,7 @@ function M.setup(opts)
     -- Set global variables for compatibility with original code
     _G.Obsidian_valt_main_path = M.config.obsidian_vault_path
     _G.musik_folder = M.config.music_folder
-    -- Setup keymappings
-    debug_print("obsidian-tools: Setting up keymappings")
-    M.setup_keymaps()
-end
-
--- Keymap helper
-local function map(mode, lhs, rhs, opts)
-    vim.api.nvim_set_keymap(mode, lhs, rhs, vim.tbl_extend("force", { noremap = true, silent = true }, opts or {}))
-end
-
--- Setup keymappings
-function M.setup_keymaps()
-    local defaults = { noremap = true, silent = true }
-    map("n", "<C-q>", "<cmd>:q<CR>", defaults) -- Exit
-    map("n", "<leader>f", "<cmd>:Telescope find_files<CR>", defaults) -- Find files
-    map("n", "<leader>t", "<cmd>:Neotree<CR>", defaults) -- Open Neotree
-    map("n", "<leader>nt", "<cmd>:lua require('obsidian-tools').process_template()<CR>", defaults) -- Apply template
-    map("n", "<leader>oot", "<cmd>:lua require('obsidian-tools').create_daily_file(os.date('%Y-%m-%d'))<CR>", defaults) -- Today's note
-    map("n", "<leader>ooy", "<cmd>:lua require('obsidian-tools').create_daily_file(require('obsidian-tools').get_yesterday(os.date('%Y-%m-%d')))<CR>", defaults) -- Yesterday's note
-    map("n", "<leader>ooT", "<cmd>:lua require('obsidian-tools').create_daily_file(require('obsidian-tools').get_tomorrow(os.date('%Y-%m-%d')))<CR>", defaults) -- Tomorrow's note
-    map("n", "<leader>ot", "<cmd>:lua require('obsidian-tools').before_get_sql_tags()<CR>", defaults) -- Tag search
-    map("n", "<leader>ob", "<cmd>:lua require('obsidian-tools').get_current_backlinks()<CR>", defaults) -- Backlink search
-    map("n", "<Enter>", "<cmd>:lua require('obsidian-tools').auto_detect()<CR>", defaults) -- Auto-detect link
-    map("n", "<C-p>", "<cmd>:lua require('obsidian-tools').auto_detect()<CR>", defaults) -- Auto-detect link
-    map("n", "<leader>z", "<cmd>:lua print('Test mapping')<CR>", defaults) -- Test mapping
+    debug_print("obsidian-tools: Setup complete")
 end
 
 -- Utility function to sanitize SQL input
@@ -209,9 +185,12 @@ function M.auto_detect()
     end
 end
 
--- Telescope picker for attributes
-function M.pick_attribute(text, callback)
-    debug_print("obsidian-tools: Attempting to use Telescope picker")
+-- Telescope picker for attributes with enhanced file display
+function M.pick_attribute(text, callback, opts)
+    opts = opts or {}
+    local title = opts.title or "Pick an Attribute"
+    debug_print("obsidian-tools: Attempting to use Telescope picker for " .. title)
+
     local ok, pickers = pcall(require, "telescope.pickers")
     if not ok then
         debug_print("obsidian-tools: Failed to load telescope.pickers: " .. tostring(pickers))
@@ -236,10 +215,16 @@ function M.pick_attribute(text, callback)
         vim.notify("obsidian-tools: Telescope action state not available, falling back to pick_attribute2", vim.log.levels.WARN)
         return M.pick_attribute2(text, callback)
     end
-    local ok, sorter = pcall(require, "telescope.config")
+    local ok, previewers = pcall(require, "telescope.previewers")
     if not ok then
-        debug_print("obsidian-tools: Failed to load telescope.config: " .. tostring(sorter))
-        vim.notify("obsidian-tools: Telescope config not available, falling back to pick_attribute2", vim.log.levels.WARN)
+        debug_print("obsidian-tools: Failed to load telescope.previewers: " .. tostring(previewers))
+        vim.notify("obsidian-tools: Telescope previewers not available, falling back to pick_attribute2", vim.log.levels.WARN)
+        return M.pick_attribute2(text, callback)
+    end
+    local ok, sorter = pcall(require, "telescope.sorters")
+    if not ok then
+        debug_print("obsidian-tools: Failed to load telescope.sorters: " .. tostring(sorter))
+        vim.notify("obsidian-tools: Telescope sorters not available, falling back to pick_attribute2", vim.log.levels.WARN)
         return M.pick_attribute2(text, callback)
     end
 
@@ -255,16 +240,34 @@ function M.pick_attribute(text, callback)
 
     debug_print("obsidian-tools: Launching Telescope picker with " .. #attributes .. " items")
     pickers.new({}, {
-        prompt_title = "Pick an Attribute",
-        finder = finders.new_table { results = attributes },
-        sorter = sorter.values.generic_sorter({}),
+        prompt_title = title,
+        finder = finders.new_table {
+            results = attributes,
+            entry_maker = function(entry)
+                return {
+                    value = entry,
+                    display = entry:gsub(M.config.obsidian_vault_path, ""), -- Display relative path
+                    ordinal = entry, -- Used for sorting
+                    path = M.config.obsidian_vault_path .. entry, -- Full path for preview
+                }
+            end,
+        },
+        sorter = sorter.get_fuzzy_file(),
+        previewer = previewers.new_buffer_previewer {
+            title = "File Preview",
+            define_preview = function(self, entry)
+                local lines = M.read_file_content(entry.path)
+                vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+                vim.api.nvim_buf_set_option(self.state.bufnr, "filetype", "markdown")
+            end,
+        },
         attach_mappings = function(prompt_bufnr, map)
             actions.select_default:replace(function()
                 actions.close(prompt_bufnr)
                 local selection = action_state.get_selected_entry()
                 if selection then
-                    debug_print("obsidian-tools: Selected Attribute: " .. selection[1])
-                    callback(selection[1])
+                    debug_print("obsidian-tools: Selected Attribute: " .. selection.value)
+                    callback(selection.value)
                 else
                     debug_print("obsidian-tools: No selection made")
                     vim.notify("obsidian-tools: No selection made", vim.log.levels.WARN)
@@ -289,7 +292,9 @@ function M.pick_attribute2(text, callback)
     -- Use vim.ui.select for interactive fallback
     vim.ui.select(attributes, {
         prompt = "Select an attribute:",
-        format_item = function(item) return item end,
+        format_item = function(item)
+            return item:gsub(M.config.obsidian_vault_path, "") -- Display relative path
+        end,
     }, function(choice)
         if choice then
             debug_print("obsidian-tools: Fallback picker selected: " .. choice)
@@ -320,7 +325,7 @@ function M.get_current_backlinks()
         vim.cmd("edit " .. vim.fn.fnameescape(path))
     end
     if _G.libsAreWorking then
-        M.pick_attribute(text, edit_md)
+        M.pick_attribute(text, edit_md, { title = "Select Backlink" })
     else
         M.pick_attribute2(text, edit_md)
     end
@@ -384,13 +389,13 @@ function M.before_get_sql_tags()
             vim.cmd("edit " .. vim.fn.fnameescape(path))
         end
         if _G.libsAreWorking then
-            M.pick_attribute(M.do_sql(text), edit_md)
+            M.pick_attribute(M.do_sql(text), edit_md, { title = "Select File for Tag: " .. tag })
         else
             M.pick_attribute2(M.do_sql(text), edit_md)
         end
     end
     if _G.libsAreWorking then
-        M.pick_attribute(res, get_sql_tags)
+        M.pick_attribute(res, get_sql_tags, { title = "Select Tag" })
     else
         M.pick_attribute2(res, get_sql_tags)
     end
